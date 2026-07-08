@@ -91,13 +91,25 @@ jobs:
           $projFile = "vcpp\cube.vcxproj"
           if (Test-Path $projFile) {
               $content = Get-Content $projFile -Raw
-              # 使用正则进行不区分大小写的替换，将单纯的 msvcrt.lib 替换为包含所有必要 CRT 组件的组合
-              $content = $content -replace "(?i)msvcrt\.lib", "msvcrt.lib;ucrt.lib;vcruntime.lib;legacy_stdio_definitions.lib"
+              # 补充 legacy_stdio_wide_specifiers.lib
+              $content = $content -replace "(?i)msvcrt\.lib", "msvcrt.lib;ucrt.lib;vcruntime.lib;legacy_stdio_definitions.lib;legacy_stdio_wide_specifiers.lib"
               Set-Content -Path $projFile -Value $content
           } else {
               Write-Error "Project file $projFile not found."
               exit 1
           }
+
+          Write-Host "Injecting UCRT polyfill for SDLmain into main.cpp..."
+          # 为旧版 SDLmain 注入向下兼容的标准 IO 流函数指针
+          $polyfill = @"
+
+          #if _MSC_VER >= 1900
+          #include <stdio.h>
+          extern `"C`" FILE* __cdecl __iob_func(void) { return __acrt_iob_func(); }
+          extern `"C`" FILE* (__cdecl *__imp____iob_func)(void) = __iob_func;
+          #endif
+          "@
+          Add-Content -Path "src\main.cpp" -Value $polyfill
       - name: Build with MSBuild (vcxproj directly)  
         shell: pwsh  
         run: msbuild vcpp\cube.vcxproj /p:Configuration=Release /p:Platform=Win32 /p:PlatformToolset=v143 /m /nologo  
