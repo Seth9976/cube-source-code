@@ -23,9 +23,11 @@ jobs:
       - name: Setup MSBuild  
         uses: microsoft/setup-msbuild@v2  
   
-      - name: Create lib directory  
+      - name: Create directories  
         shell: pwsh  
-        run: New-Item -ItemType Directory -Force -Path lib  
+        run: |  
+          New-Item -ItemType Directory -Force -Path lib  
+          New-Item -ItemType Directory -Force -Path artifact  
   
       - name: Download SDL 1.2.15  
         shell: pwsh  
@@ -58,21 +60,30 @@ jobs:
           Copy-Item "SDL_image_pkg\SDL_image-1.2.12\lib\x86\*.lib" lib\  
           Copy-Item "SDL_mixer_pkg\SDL_mixer-1.2.12\lib\x86\*.lib" lib\  
   
-      - name: Install zlib x86 via vcpkg  
+      - name: Download zlib source  
         shell: pwsh  
-        run: vcpkg install zlib:x86-windows  
+        run: Invoke-WebRequest -Uri "https://github.com/madler/zlib/archive/refs/tags/v1.3.2.zip" -OutFile zlib.zip  
   
-      - name: Copy zlib lib to lib/  
+      - name: Extract zlib source  
         shell: pwsh  
-        run: Copy-Item "$env:VCPKG_INSTALLATION_ROOT\installed\x86-windows\lib\zlib.lib" lib\  
+        run: Expand-Archive -Path zlib.zip -DestinationPath zlib_src_pkg  
+  
+      - name: Build zlib x86 shared library  
+        shell: pwsh  
+        run: |  
+          cmake -S zlib_src_pkg\zlib-1.3.2 -B zlib_build -A Win32 -DBUILD_SHARED_LIBS=ON  
+          cmake --build zlib_build --config Release  
+          Get-ChildItem zlib_build\Release\  
+          Copy-Item zlib_build\Release\zlib.lib lib\  
+          Copy-Item zlib_build\Release\zlib1.dll artifact\  
+  
+      - name: List lib directory  
+        shell: pwsh  
+        run: Get-ChildItem lib\  
   
       - name: Build with MSBuild  
         shell: pwsh  
         run: msbuild vcpp\cube.sln /p:Configuration=${{ matrix.config }} /p:Platform=Win32 /p:PlatformToolset=v143 /m /nologo  
-  
-      - name: Create artifact directory  
-        shell: pwsh  
-        run: New-Item -ItemType Directory -Force -Path artifact  
   
       - name: Copy exe to artifact  
         shell: pwsh  
@@ -84,10 +95,6 @@ jobs:
           Copy-Item "SDL_pkg\SDL-1.2.15\lib\x86\SDL.dll" artifact\  
           Copy-Item "SDL_image_pkg\SDL_image-1.2.12\lib\x86\SDL_image.dll" artifact\  
           Copy-Item "SDL_mixer_pkg\SDL_mixer-1.2.12\lib\x86\SDL_mixer.dll" artifact\  
-  
-      - name: Copy zlib DLL to artifact  
-        shell: pwsh  
-        run: Copy-Item "$env:VCPKG_INSTALLATION_ROOT\installed\x86-windows\bin\zlib1.dll" artifact\  
   
       - name: Upload artifact  
         uses: actions/upload-artifact@v4  
