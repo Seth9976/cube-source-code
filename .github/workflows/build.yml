@@ -6,15 +6,13 @@ on:
   pull_request:  
   workflow_dispatch:  
   
+permissions:  
+  contents: write  
+  
 jobs:  
   build:  
-    name: windows (${{ matrix.config }})  
+    name: windows (Release)  
     runs-on: windows-2022  
-  
-    strategy:  
-      fail-fast: false  
-      matrix:  
-        config: [Debug, Release]  
   
     steps:  
       - name: Checkout repository  
@@ -73,7 +71,6 @@ jobs:
         run: |  
           cmake -S zlib_src_pkg\zlib-1.3.2 -B zlib_build -A Win32 -DBUILD_SHARED_LIBS=ON  
           cmake --build zlib_build --config Release  
-          Get-ChildItem zlib_build\Release\  
           Copy-Item zlib_build\Release\z.lib lib\zlib.lib  
           Copy-Item zlib_build\Release\z.dll artifact\zlib1.dll  
   
@@ -81,13 +78,17 @@ jobs:
         shell: pwsh  
         run: Get-ChildItem lib\  
   
-      - name: Build with MSBuild  
+      - name: Build with MSBuild (vcxproj directly)  
         shell: pwsh  
-        run: msbuild vcpp\cube.sln /p:Configuration=${{ matrix.config }} /p:Platform=Win32 /p:PlatformToolset=v143 /m /nologo  
+        run: msbuild vcpp\cube.vcxproj /p:Configuration=Release /p:Platform=Win32 /p:PlatformToolset=v143 /m /nologo  
+  
+      - name: Find build output  
+        shell: pwsh  
+        run: Get-ChildItem -Recurse vcpp\ -Include *.exe | Select-Object FullName, Length, LastWriteTime  
   
       - name: Copy exe to artifact  
         shell: pwsh  
-        run: Copy-Item "vcpp\${{ matrix.config }}\*.exe" artifact\  
+        run: Copy-Item "vcpp\Release\cube.exe" artifact\  
   
       - name: Copy SDL DLLs to artifact  
         shell: pwsh  
@@ -96,8 +97,21 @@ jobs:
           Copy-Item "SDL_image_pkg\SDL_image-1.2.12\lib\x86\SDL_image.dll" artifact\  
           Copy-Item "SDL_mixer_pkg\SDL_mixer-1.2.12\lib\x86\SDL_mixer.dll" artifact\  
   
+      - name: List artifact directory  
+        shell: pwsh  
+        run: Get-ChildItem artifact\  
+  
       - name: Upload artifact  
         uses: actions/upload-artifact@v4  
         with:  
-          name: cube-windows-${{ matrix.config }}  
-          path: artifact\
+          name: cube-windows-Release  
+          path: artifact\  
+  
+      - name: Create GitHub Release  
+        if: github.event_name != 'pull_request'  
+        uses: softprops/action-gh-release@v2  
+        with:  
+          tag_name: build-${{ github.run_number }}  
+          name: "Cube Build ${{ github.run_number }}"  
+          files: artifact/*  
+          generate_release_notes: false
