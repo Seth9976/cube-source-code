@@ -23,81 +23,71 @@ jobs:
       - name: Setup MSBuild  
         uses: microsoft/setup-msbuild@v2  
   
-      # ── 创建 lib/ 目录（vcxproj 中 AdditionalLibraryDirectories 指向此处）──  
       - name: Create lib directory  
         shell: pwsh  
         run: New-Item -ItemType Directory -Force -Path lib  
   
-      # ── 下载 SDL 1.2.15 (VC 预编译包) ──  
       - name: Download SDL 1.2.15  
         shell: pwsh  
-        run: |  
-          Invoke-WebRequest `  
-            "https://www.libsdl.org/release/SDL-devel-1.2.15-VC.zip" `  
-            -OutFile SDL.zip  
-          Expand-Archive SDL.zip -DestinationPath SDL_pkg  
+        run: Invoke-WebRequest -Uri "https://www.libsdl.org/release/SDL-devel-1.2.15-VC.zip" -OutFile SDL.zip  
   
-      # ── 下载 SDL_image 1.2.12 ──  
+      - name: Extract SDL 1.2.15  
+        shell: pwsh  
+        run: Expand-Archive -Path SDL.zip -DestinationPath SDL_pkg  
+  
       - name: Download SDL_image 1.2.12  
         shell: pwsh  
-        run: |  
-          Invoke-WebRequest `  
-            "https://www.libsdl.org/projects/SDL_image/release/SDL_image-devel-1.2.12-VC.zip" `  
-            -OutFile SDL_image.zip  
-          Expand-Archive SDL_image.zip -DestinationPath SDL_image_pkg  
+        run: Invoke-WebRequest -Uri "https://www.libsdl.org/projects/SDL_image/release/SDL_image-devel-1.2.12-VC.zip" -OutFile SDL_image.zip  
   
-      # ── 下载 SDL_mixer 1.2.12 ──  
+      - name: Extract SDL_image 1.2.12  
+        shell: pwsh  
+        run: Expand-Archive -Path SDL_image.zip -DestinationPath SDL_image_pkg  
+  
       - name: Download SDL_mixer 1.2.12  
         shell: pwsh  
-        run: |  
-          Invoke-WebRequest `  
-            "https://www.libsdl.org/projects/SDL_mixer/release/SDL_mixer-devel-1.2.12-VC.zip" `  
-            -OutFile SDL_mixer.zip  
-          Expand-Archive SDL_mixer.zip -DestinationPath SDL_mixer_pkg  
+        run: Invoke-WebRequest -Uri "https://www.libsdl.org/projects/SDL_mixer/release/SDL_mixer-devel-1.2.12-VC.zip" -OutFile SDL_mixer.zip  
   
-      # ── 将 x86 .lib 文件复制到 lib/ ──  
+      - name: Extract SDL_mixer 1.2.12  
+        shell: pwsh  
+        run: Expand-Archive -Path SDL_mixer.zip -DestinationPath SDL_mixer_pkg  
+  
       - name: Copy SDL libs to lib/  
         shell: pwsh  
         run: |  
-          Copy-Item "SDL_pkg\SDL-1.2.15\lib\x86\*.lib"         lib\  
+          Copy-Item "SDL_pkg\SDL-1.2.15\lib\x86\*.lib" lib\  
           Copy-Item "SDL_image_pkg\SDL_image-1.2.12\lib\x86\*.lib" lib\  
           Copy-Item "SDL_mixer_pkg\SDL_mixer-1.2.12\lib\x86\*.lib" lib\  
   
-      # ── 通过 vcpkg 安装 zlib (x86) ──  
       - name: Install zlib x86 via vcpkg  
         shell: pwsh  
-        run: |  
-          vcpkg install zlib:x86-windows  
-          Copy-Item "$env:VCPKG_INSTALLATION_ROOT\installed\x86-windows\lib\zlib.lib" lib\  
+        run: vcpkg install zlib:x86-windows  
   
-      # ── MSBuild 编译 ──  
+      - name: Copy zlib lib to lib/  
+        shell: pwsh  
+        run: Copy-Item "$env:VCPKG_INSTALLATION_ROOT\installed\x86-windows\lib\zlib.lib" lib\  
+  
       - name: Build with MSBuild  
         shell: pwsh  
-        run: |  
-          msbuild vcpp\cube.sln `  
-            /p:Configuration=${{ matrix.config }} `  
-            /p:Platform=Win32 `  
-            /p:PlatformToolset=v143 `  
-            /m `  
-            /nologo  
+        run: msbuild vcpp\cube.sln /p:Configuration=${{ matrix.config }} /p:Platform=Win32 /p:PlatformToolset=v143 /m /nologo  
   
-      # ── 收集产物（exe + 运行时 DLL）──  
-      - name: Collect artifacts  
+      - name: Create artifact directory  
+        shell: pwsh  
+        run: New-Item -ItemType Directory -Force -Path artifact  
+  
+      - name: Copy exe to artifact  
+        shell: pwsh  
+        run: Copy-Item "vcpp\${{ matrix.config }}\*.exe" artifact\  
+  
+      - name: Copy SDL DLLs to artifact  
         shell: pwsh  
         run: |  
-          $out = "artifact"  
-          New-Item -ItemType Directory -Force -Path $out  
+          Copy-Item "SDL_pkg\SDL-1.2.15\lib\x86\SDL.dll" artifact\  
+          Copy-Item "SDL_image_pkg\SDL_image-1.2.12\lib\x86\SDL_image.dll" artifact\  
+          Copy-Item "SDL_mixer_pkg\SDL_mixer-1.2.12\lib\x86\SDL_mixer.dll" artifact\  
   
-          # 可执行文件  
-          Copy-Item "vcpp\${{ matrix.config }}\*.exe" $out\  
-  
-          # SDL 运行时 DLL（exe 运行时需要）  
-          Copy-Item "SDL_pkg\SDL-1.2.15\lib\x86\SDL.dll"                   $out\  
-          Copy-Item "SDL_image_pkg\SDL_image-1.2.12\lib\x86\SDL_image.dll" $out\  
-          Copy-Item "SDL_mixer_pkg\SDL_mixer-1.2.12\lib\x86\SDL_mixer.dll" $out\  
-  
-          # zlib DLL  
-          Copy-Item "$env:VCPKG_INSTALLATION_ROOT\installed\x86-windows\bin\zlib1.dll" $out\  
+      - name: Copy zlib DLL to artifact  
+        shell: pwsh  
+        run: Copy-Item "$env:VCPKG_INSTALLATION_ROOT\installed\x86-windows\bin\zlib1.dll" artifact\  
   
       - name: Upload artifact  
         uses: actions/upload-artifact@v4  
