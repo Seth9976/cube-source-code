@@ -77,7 +77,27 @@ jobs:
       - name: List lib directory  
         shell: pwsh  
         run: Get-ChildItem lib\  
-  
+      # 此步骤用于在进行 MSBuild 编译前修补项目中的遗留问题
+      # 1. 将 CMake 构建出的现代 Zlib 头文件覆盖掉项目源码自带的旧头文件，解决 __stdcall 和 __cdecl 的调用约定冲突。
+      # 2. 读取并修改 vcxproj 项目文件，将缺失的 ucrt.lib 和 vcruntime.lib 加入链接参数，同时引入 legacy_stdio_definitions.lib 以兼容旧版 SDL 的旧式 I/O 调用。
+      - name: Patch vcxproj CRT issue and Update zlib headers
+        shell: pwsh
+        run: |
+          Write-Host "Updating Zlib headers..."
+          Copy-Item "zlib_src_pkg\zlib-1.3.2\zlib.h" "include\zlib.h" -Force
+          Copy-Item "zlib_build\zconf.h" "include\zconf.h" -Force
+          
+          Write-Host "Patching .vcxproj for modern VS2022 CRT..."
+          $projFile = "vcpp\cube.vcxproj"
+          if (Test-Path $projFile) {
+              $content = Get-Content $projFile -Raw
+              # 使用正则进行不区分大小写的替换，将单纯的 msvcrt.lib 替换为包含所有必要 CRT 组件的组合
+              $content = $content -replace "(?i)msvcrt\.lib", "msvcrt.lib;ucrt.lib;vcruntime.lib;legacy_stdio_definitions.lib"
+              Set-Content -Path $projFile -Value $content
+          } else {
+              Write-Error "Project file $projFile not found."
+              exit 1
+          }
       - name: Build with MSBuild (vcxproj directly)  
         shell: pwsh  
         run: msbuild vcpp\cube.vcxproj /p:Configuration=Release /p:Platform=Win32 /p:PlatformToolset=v143 /m /nologo  
