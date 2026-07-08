@@ -128,9 +128,10 @@ jobs:
         shell: pwsh  
         run: |  
           Copy-Item "SDL_pkg\SDL-1.2.15\lib\x86\SDL.dll" artifact\  
-          Copy-Item "SDL_image_pkg\SDL_image-1.2.12\lib\x86\SDL_image.dll" artifact\  
-          Copy-Item "SDL_mixer_pkg\SDL_mixer-1.2.12\lib\x86\SDL_mixer.dll" artifact\  
-  
+          # SDL_image 及其所有间接依赖  
+          Copy-Item "SDL_image_pkg\SDL_image-1.2.12\lib\x86\*.dll" artifact\  
+          # SDL_mixer 及其所有间接依赖  
+          Copy-Item "SDL_mixer_pkg\SDL_mixer-1.2.12\lib\x86\*.dll" artifact\  
       - name: List artifact directory  
         shell: pwsh  
         run: Get-ChildItem artifact\  
