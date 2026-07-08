@@ -1,0 +1,143 @@
+# 该工作流用于在 Windows 环境下自动化编译 Cube 引擎的 32位 (x86) Release 版本。
+# 主要处理了旧版 SDL1.2 依赖下载、zlib 源码实时编译，以及兼容 VS2022 的 C 运行时(CRT)与入口点修补。
+
+name: Build Cube (Windows-Release)  
+  
+on:  
+  push:  
+    branches: [ main, master ]  
+  pull_request:  
+  workflow_dispatch:  
+  
+permissions:  
+  contents: write  
+  
+jobs:  
+  build:  
+    name: windows (Release)  
+    runs-on: windows-2022  
+  
+    steps:  
+      - name: Checkout repository  
+        uses: actions/checkout@v4  
+  
+      - name: Setup MSBuild  
+        uses: microsoft/setup-msbuild@v2  
+  
+      - name: Create directories  
+        shell: pwsh  
+        run: |  
+          New-Item -ItemType Directory -Force -Path lib  
+          New-Item -ItemType Directory -Force -Path artifact  
+  
+      - name: Download SDL 1.2.15  
+        shell: pwsh  
+        run: Invoke-WebRequest -Uri "https://www.libsdl.org/release/SDL-devel-1.2.15-VC.zip" -OutFile SDL.zip  
+  
+      - name: Extract SDL 1.2.15  
+        shell: pwsh  
+        run: Expand-Archive -Path SDL.zip -DestinationPath SDL_pkg  
+  
+      - name: Download SDL_image 1.2.12  
+        shell: pwsh  
+        run: Invoke-WebRequest -Uri "https://www.libsdl.org/projects/SDL_image/release/SDL_image-devel-1.2.12-VC.zip" -OutFile SDL_image.zip  
+  
+      - name: Extract SDL_image 1.2.12  
+        shell: pwsh  
+        run: Expand-Archive -Path SDL_image.zip -DestinationPath SDL_image_pkg  
+  
+      - name: Download SDL_mixer 1.2.12  
+        shell: pwsh  
+        run: Invoke-WebRequest -Uri "https://www.libsdl.org/projects/SDL_mixer/release/SDL_mixer-devel-1.2.12-VC.zip" -OutFile SDL_mixer.zip  
+  
+      - name: Extract SDL_mixer 1.2.12  
+        shell: pwsh  
+        run: Expand-Archive -Path SDL_mixer.zip -DestinationPath SDL_mixer_pkg  
+  
+      - name: Copy SDL libs to lib/  
+        # 将所有预编译好的 32 位导入库复制到集中位置供链接器使用
+        shell: pwsh  
+        run: |  
+          Copy-Item "SDL_pkg\SDL-1.2.15\lib\x86\*.lib" lib\  
+          Copy-Item "SDL_image_pkg\SDL_image-1.2.12\lib\x86\*.lib" lib\  
+          Copy-Item "SDL_mixer_pkg\SDL_mixer-1.2.12\lib\x86\*.lib" lib\  
+  
+      - name: Download zlib source  
+        shell: pwsh  
+        run: Invoke-WebRequest -Uri "https://github.com/madler/zlib/archive/refs/tags/v1.3.2.zip" -OutFile zlib.zip  
+  
+      - name: Extract zlib source  
+        shell: pwsh  
+        run: Expand-Archive -Path zlib.zip -DestinationPath zlib_src_pkg  
+  
+      - name: Build zlib x86 shared library  
+        # 通过 CMake 编译 32 位的 zlib，并分离 .lib 和 .dll 以解决名称依赖问题
+        shell: pwsh  
+        run: |  
+          cmake -S zlib_src_pkg\zlib-1.3.2 -B zlib_build -A Win32 -DBUILD_SHARED_LIBS=ON  
+          cmake --build zlib_build --config Release  
+          Copy-Item zlib_build\Release\z.lib lib\zlib.lib  
+          # 关键修复：保持原名 z.dll 供 cube.exe 运行期加载，避免被系统 64 位 PATH 污染
+          Copy-Item zlib_build\Release\z.dll artifact\  
+  
+      - name: Patch vcxproj CRT issue, Update zlib headers, and Create SDL main stub  
+        # 1. 覆盖 zlib 头文件以纠正调用约定
+        # 2. 注入自行编写的 sdl_main_stub.cpp 抛弃老旧不兼容的 SDLmain.lib
+        # 3. 更换针对 VS2022 环境的动态 CRT
+        shell: pwsh  
+        run: |  
+          Write-Host "Updating Zlib headers..."  
+          Copy-Item "zlib_src_pkg\zlib-1.3.2\zlib.h" "include\zlib.h" -Force  
+          Copy-Item "zlib_build\zconf.h" "include\zconf.h" -Force  
+        
+          Write-Host "Creating SDL main stub (replaces SDLmain.lib)..."  
+          $nl = [Environment]::NewLine  
+          $stubContent = ('// sdl_main_stub.cpp' + $nl + '// Do NOT include SDL.h here - it would redefine main as SDL_main' + $nl + 'extern "C" int SDL_main(int argc, char* argv[]);' + $nl + 'int main(int argc, char* argv[]) { return SDL_main(argc, argv); }')  
+          Set-Content -Path "src\sdl_main_stub.cpp" -Value $stubContent -NoNewline  
+        
+          Write-Host "Patching .vcxproj..."  
+          $projFile = "vcpp\cube.vcxproj"  
+          $content = Get-Content $projFile -Raw  
+        
+          # 移除不兼容的 SDLmain.lib 及其相关废弃补丁库
+          $content = $content -replace ";?SDLmain\.lib", ""  
+          $content = $content -replace ";?legacy_stdio_definitions\.lib", ""  
+          $content = $content -replace ";?legacy_stdio_wide_specifiers\.lib", ""  
+        
+          # 注入完整的 VS2022 CRT 动态链接组件
+          $content = $content -replace "(?i)msvcrt\.lib", "msvcrt.lib;ucrt.lib;vcruntime.lib"  
+        
+          # 在编译管线中包含生成的 stub 文件
+          $stubItemGroup = "  <ItemGroup>$([Environment]::NewLine)    <ClCompile Include=""..\src\sdl_main_stub.cpp""><PrecompiledHeader></PrecompiledHeader></ClCompile>$([Environment]::NewLine)  </ItemGroup>$([Environment]::NewLine)"  
+          $content = $content -replace '(  <Import Project="\$\(VCTargetsPath\)\\Microsoft\.Cpp\.targets")', ($stubItemGroup + '$1')  
+        
+          Set-Content -Path $projFile -Value $content  
+          Write-Host "Patching complete."
+  
+      - name: Build with MSBuild (vcxproj directly)  
+        # 直接指定目标 .vcxproj 以绕过 sln 缺失 Build.0 配置节点的问题
+        shell: pwsh  
+        run: msbuild vcpp\cube.vcxproj /p:Configuration=Release /p:Platform=Win32 /p:PlatformToolset=v143 /m /nologo  
+  
+      - name: Copy binaries to artifact  
+        # 将主程序以及 SDL 的直接和间接依赖（包括 SDL_image 自带的 32 位 zlib1.dll）集中输出
+        shell: pwsh  
+        run: |  
+          Copy-Item "vcpp\Release\cube.exe" artifact\  
+          Copy-Item "SDL_pkg\SDL-1.2.15\lib\x86\SDL.dll" artifact\  
+          Copy-Item "SDL_image_pkg\SDL_image-1.2.12\lib\x86\*.dll" artifact\  
+          Copy-Item "SDL_mixer_pkg\SDL_mixer-1.2.12\lib\x86\*.dll" artifact\  
+  
+      - name: Upload artifact  
+        uses: actions/upload-artifact@v4  
+        with:  
+          name: cube-windows-Release  
+          path: artifact\  
+  
+      - name: Create GitHub Release  
+        if: github.event_name != 'pull_request'  
+        uses: softprops/action-gh-release@v2  
+        with:  
+          tag_name: build-${{ github.run_number }}  
+          name: "Cube Build ${{ github.run_number }}"  
+          files: artifact/* generate_release_notes: false
