@@ -140,4 +140,5 @@ jobs:
         with:  
           tag_name: build-${{ github.run_number }}  
           name: "Cube Build ${{ github.run_number }}"  
-          files: artifact/* generate_release_notes: false
+          files: artifact/*  
+          generate_release_notes: false
